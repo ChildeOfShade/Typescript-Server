@@ -1,35 +1,56 @@
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-import { config } from "./config.js"; // Import the config
+import { config } from "./config.js";
+// Setup for ES Modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const appPath = path.join(process.cwd(), "app");
 const app = express();
 const PORT = 8080;
-// Metric incrementer middleware
-const middlewareMetricsInc = (req, res, next) => {
-    config.fileserverHits += 1;
+// 1. Logging Middleware (for non-OK status codes)
+const middlewareLogResponses = (req, res, next) => {
+    res.on("finish", () => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+            console.log(`[NON-OK] ${req.method} ${req.url} - Status: ${res.statusCode}`);
+        }
+    });
     next();
 };
-// Handler for /metrics
+// 2. Metrics Middleware (increments hit count ONLY for /app requests)
+const middlewareMetricsInc = (req, res, next) => {
+    if (req.url.startsWith("/app")) {
+        config.fileserverHits += 1;
+    }
+    next();
+};
+// 3. Handlers
+const handlerHealthz = (req, res) => {
+    res.set("Content-Type", "text/plain; charset=utf-8");
+    res.status(200).send("OK");
+};
 const handlerMetrics = (req, res) => {
     res.set("Content-Type", "text/plain; charset=utf-8");
     res.status(200).send(`Hits: ${config.fileserverHits}`);
 };
-// Handler for /reset
 const handlerReset = (req, res) => {
     config.fileserverHits = 0;
     res.set("Content-Type", "text/plain; charset=utf-8");
     res.status(200).send("OK");
 };
-// Apply routes
-// 1. Log responses middleware (from previous step)
-// 2. Metrics endpoint
-app.get("/metrics", handlerMetrics);
-app.get("/reset", handlerReset);
-// 3. Static files with the new Metric Incrementer middleware
-app.use("/app", middlewareMetricsInc, express.static(appPath));
+// 4. Register Middleware and Routes
+// Order matters: Logging first, then metric tracking, then routes
+app.use(middlewareLogResponses);
+app.use(middlewareMetricsInc);
+app.get("/api/healthz", handlerHealthz);
+app.get("/api/metrics", handlerMetrics);
+app.get("/api/reset", handlerReset);
+app.get("/", (req, res) => {
+    res.redirect("/app/");
+});
+// Static files served at /app
+app.use("/app", express.static(appPath));
+// 5. Start Server
 app.listen(PORT, () => {
     console.log(`Server is running at http://localhost:${PORT}`);
 });

@@ -36,8 +36,18 @@ const handlerHealthz = (req: Request, res: Response) => {
 };
 
 const handlerMetrics = (req: Request, res: Response) => {
-  res.set("Content-Type", "text/plain; charset=utf-8");
-  res.status(200).send(`Hits: ${config.fileserverHits}`);
+  // Change plain to html
+  res.set("Content-Type", "text/html; charset=utf-8");
+  
+  // Use the template and inject the hit count
+  res.status(200).send(`
+<html>
+  <body>
+    <h1>Welcome, Chirpy Admin</h1>
+    <p>Chirpy has been visited ${config.fileserverHits} times!</p>
+  </body>
+</html>
+  `);
 };
 
 const handlerReset = (req: Request, res: Response) => {
@@ -46,14 +56,35 @@ const handlerReset = (req: Request, res: Response) => {
   res.status(200).send("OK");
 };
 
+const handlerValidateChirp = (req: Request, res: Response) => {
+  const { body } = req.body;
+
+  // 1. Handle missing body or unexpected errors
+  if (typeof body !== 'string') {
+    return res.status(400).json({ error: "Something went wrong" });
+  }
+
+  // 2. Check the "Silly Rule" (140 character limit)
+  if (body.length > 140) {
+    return res.status(400).json({ error: "Chirp is too long" });
+  }
+
+  // 3. If valid, send 200 OK
+  return res.status(200).json({ valid: true });
+};
+
 // 4. Register Middleware and Routes
 // Order matters: Logging first, then metric tracking, then routes
 app.use(middlewareLogResponses);
 app.use(middlewareMetricsInc);
+app.use(express.json()); // This middleware is essential for reading POST bodies
 
+// Change this line from .get to .post
+app.post("/admin/reset", handlerReset); 
+app.post("/api/validate_chirp", handlerValidateChirp);
+// Keep the others as they were
+app.get("/admin/metrics", handlerMetrics);
 app.get("/api/healthz", handlerHealthz);
-app.get("/api/metrics", handlerMetrics);
-app.get("/api/reset", handlerReset);
 app.get("/", (req, res) => {
     res.redirect("/app/");
 });

@@ -1,14 +1,20 @@
-// 1. Load the environment variables first!
 process.loadEnvFile();
-// 2. Helper to crash if the key is missing
 function envOrThrow(key) {
     const value = process.env[key];
-    if (!value) {
+    if (!value)
         throw new Error(`Missing environment variable: ${key}`);
-    }
     return value;
 }
+// Combine both configurations into a single exported object
 export const config = {
-    fileserverHits: 0,
-    dbURL: envOrThrow("DB_URL"), // Load the variable here
+    api: {
+        fileserverHits: 0,
+        platform: process.env.PLATFORM || "dev", // Default to dev if not set
+    },
+    db: {
+        url: envOrThrow("DB_URL"),
+        migrationConfig: {
+            migrationsFolder: "./drizzle",
+        },
+    },
 };

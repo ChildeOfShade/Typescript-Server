@@ -6,8 +6,10 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { fileURLToPath } from "url";
 import { config } from "./config.js";
 import { AppError } from "./errors.js";
-import { createUser, deleteAllUsers } from "./db/queries/users.js";
-import { createChirp, getChirps } from "./db/queries/chirps.js";
+import { createUser, deleteAllUsers, getUserByEmail } from "./db/queries/users.js";
+import { createChirp, getChirps, getChirpById } from "./db/queries/chirps.js";
+import { hashPassword, checkPasswordHash } from "./auth.js";
+import { User } from "./db/schema.js";
 
 // --- 1. DATABASE MIGRATIONS ---
 const migrationClient = postgres(config.db.url, { max: 1 });
@@ -30,6 +32,9 @@ const appPath = path.join(process.cwd(), "app");
 
 const app = express();
 const PORT = 8080;
+
+// Utility type to strip the password from responses
+type UserResponse = Omit<User, "hashedPassword">;
 
 const middlewareLogResponses = (req: Request, res: Response, next: NextFunction) => {
   res.on("finish", () => {
@@ -80,21 +85,58 @@ app.get("/admin/metrics", (req, res) => {
   `);
 });
 
-// API: Create User
+// API: Register User
 app.post("/api/users", async (req, res, next) => {
   try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: "Email is required" });
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password are required" });
+    }
 
-    const user = await createUser({ email });
+    const hashedPassword = await hashPassword(password);
+    const user = await createUser({ email, hashedPassword });
+    
     if (!user) return res.status(409).json({ error: "User already exists" });
 
-    res.status(201).json({
+    const response: UserResponse = {
       id: user.id,
       email: user.email,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
-    });
+    };
+
+    res.status(201).json(response);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// API: Login
+app.post("/api/login", async (req, res, next) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password are required" });
+    }
+
+    const user = await getUserByEmail(email);
+    if (!user) {
+      return res.status(401).json({ error: "incorrect email or password" });
+    }
+
+    const isPasswordValid = await checkPasswordHash(password, user.hashedPassword);
+    if (!isPasswordValid) {
+      return res.status(401).json({ error: "incorrect email or password" });
+    }
+
+    const response: UserResponse = {
+      id: user.id,
+      email: user.email,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    };
+
+    res.status(200).json(response);
   } catch (err) {
     next(err);
   }
@@ -129,23 +171,42 @@ app.post("/api/chirps", async (req, res, next) => {
   }
 });
 
-// API: Health Check
-app.get("/api/healthz", (req, res) => {
-  res.set("Content-Type", "text/plain; charset=utf-8");
-  res.status(200).send("OK");
-});
-
 // API: Get All Chirps
 app.get("/api/chirps", async (req, res, next) => {
   try {
     const allChirps = await getChirps();
-
-    // Drizzle returns the objects. We just need to ensure 
-    // the field names match the requirements (id, createdAt, etc.)
     res.status(200).json(allChirps);
   } catch (err) {
     next(err);
   }
+});
+
+// API: Get Chirp by ID
+app.get("/api/chirps/:chirpId", async (req, res, next) => {
+  try {
+    const { chirpId } = req.params;
+    const chirp = await getChirpById(chirpId);
+
+    if (!chirp) {
+      return res.status(404).json({ error: "Chirp not found" });
+    }
+
+    res.status(200).json({
+      id: chirp.id,
+      createdAt: chirp.createdAt,
+      updatedAt: chirp.updatedAt,
+      body: chirp.body,
+      userId: chirp.userId,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// API: Health Check
+app.get("/api/healthz", (req, res) => {
+  res.set("Content-Type", "text/plain; charset=utf-8");
+  res.status(200).send("OK");
 });
 
 // Static Assets
